@@ -3,36 +3,21 @@
 namespace Silverorange\PackageChecker\Console;
 
 use Composer\Factory as ComposerFactory;
-use Composer\Semver\Semver;
+use Silverorange\PackageChecker\Objects\Package;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
-use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Style\OutputStyle;
+use Symfony\Component\Console\Style\SymfonyStyle;
 
-/**
- * @phpstan-type Requirements array<string|string>
- * @phpstan-type Package object{
- *     name:string,
- *     version:string,
- *     require:Requirements,
- *     requireDev?:Requirements,
- *     phpRequirement:string,
- *     homepage?:string,
- *     support?:string,
- *  }
- */
 #[AsCommand(
     name: 'check',
     description: 'Checks all the composer packages in a project for PHP compatibility.'
 )]
 class CheckCommand extends Command
 {
-    public const VALIDITY_OK = 'OK';
-    public const VALIDITY_FAIL = 'Failures';
-    public const VALIDITY_UNKNOWN = 'Unknown';
-
     protected function configure(): void
     {
         $this->setHelp('Checks all the composer packages in a project for PHP compatibility.');
@@ -44,91 +29,102 @@ class CheckCommand extends Command
             'Target version of PHP against which to compare packages',
             phpversion()
         );
+
+        $this->addOption(
+            'direct',
+            'D',
+            InputOption::VALUE_NONE,
+            'Shows only packages that are directly required by the root package'
+        );
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $output->writeln('<info>Checking composer packages</info>');
+        $io = new SymfonyStyle($input, $output);
 
-        $packages = $this->getLoadedPackages();
-        if ($packages === null) {
-            $output->writeln('<error>No composer packages found.</error>');
+        $direct = (bool) $input->getOption('direct');
+
+        try {
+            $packages = $this->getLoadedPackages($direct);
+        } catch (\Exception $e) {
+            $io->error($e->getMessage());
 
             return Command::FAILURE;
         }
 
         $targetPHPVersion = $input->getOption('targetVersion');
 
-        ProgressBar::setFormatDefinition('custom', ' %current%/%max% [%bar%] %message%');
-
-        $progressBar = new ProgressBar($output, count($packages));
-        $progressBar->setFormat('custom');
-        $progressBar->setMessage('');
-
         $results = [
-            self::VALIDITY_OK      => [],
-            self::VALIDITY_FAIL    => [],
-            self::VALIDITY_UNKNOWN => [],
+            Package::VALIDITY_OK      => [],
+            Package::VALIDITY_FAIL    => [],
+            Package::VALIDITY_UNKNOWN => [],
         ];
 
-        foreach ($progressBar->iterate($packages) as $package) {
-            $progressBar->setMessage($package->name);
+        $table = $io->createTable();
+        $table->setHeaders(['Package', 'Version', 'PHP']);
 
-            $isValid = $this->isPackageValidForTarget($package, $targetPHPVersion);
+        foreach ($packages as $package) {
+            $isValid = $package->isValidForTarget($targetPHPVersion);
             $results[$isValid][] = $package;
-        }
 
-        $progressBar->setMessage('');
-        $progressBar->finish();
-
-        $output->writeln(['', '']);
-
-        $result = Command::SUCCESS;
-
-        $output->writeln(
-            array_map(
-                fn (string $k, array $v) => sprintf('%-10s: %d', $k, count($v)),
-                array_keys($results),
-                array_values($results)
-            )
-        );
-
-        if (count($results[self::VALIDITY_FAIL]) > 0) {
-            $output->writeln([
-                '',
-                '<error>FAILURES:</error>',
-                "These packages have PHP requirements that do not meet the target of {$targetPHPVersion}:",
-                '',
+            $table->addRow([
+                $this->getStatusIndicator($isValid) . ' ' . $package->name,
+                $package->version,
+                $package->phpRequirement,
             ]);
-            $this->listPackages($output, $results[self::VALIDITY_FAIL], true);
-            $result = Command::FAILURE;
         }
 
-        if (count($results[self::VALIDITY_UNKNOWN]) > 0) {
-            $output->writeln([
-                '',
-                '<comment>UNKNOWN:</comment>',
-                'These packages have unknown PHP requirements; check their source code:',
-                '',
-            ]);
-            $this->listPackages($output, $results[self::VALIDITY_UNKNOWN], false);
-            $result = Command::FAILURE;
+        if ($io->isVerbose()) {
+            $table->render();
         }
 
-        return $result;
+        if (!$io->isQuiet()) {
+            $io->section('SUMMARY');
+            $summary = array_map(
+                fn ($v) => count($v),
+                $results,
+            );
+
+            $io->createTable()
+                ->setVertical()
+                ->setHeaders(array_keys($summary))
+                ->addRow($summary)
+                ->render();
+            $io->newLine();
+        }
+
+        if ($io->isVeryVerbose()) {
+            if (count($results[Package::VALIDITY_FAIL]) > 0) {
+                $io->section('FAILURES');
+                $io->writeln('This packages do not meet the target PHP requirement:');
+                $this->showDetailsTableArray($io, $results[Package::VALIDITY_FAIL]);
+            }
+
+            if (count($results[Package::VALIDITY_UNKNOWN]) > 0) {
+                $io->section('UNKNOWN');
+                $io->writeln('These packages do not have a PHP requirement, so may or may not be valid:');
+                $this->showDetailsTableArray($io, $results[Package::VALIDITY_UNKNOWN]);
+            }
+        }
+
+        return count($results[Package::VALIDITY_OK]) === count($packages)
+            ? Command::SUCCESS
+            : Command::FAILURE;
     }
 
     /**
-     * @return ?array<Package>
+     * @return array<Package>
+     *
+     * @throws \Exception
      */
-    private function getLoadedPackages(): ?array
+    private function getLoadedPackages(bool $directOnly): array
     {
         $data = file_get_contents(
             $this->getProjectRoot() . '/composer.lock'
         );
 
         if ($data === false) {
-            return null;
+            throw new \Exception('Could not read composer.lock.');
         }
 
         $json = json_decode($data);
@@ -138,14 +134,34 @@ class CheckCommand extends Command
             $json->{'packages-dev'}
         );
 
-        foreach ($packages as $package) {
-            $package->require = (array) ($package->require ?? []);
-            $package->requireDev = (array) ($package->{'require-dev'} ?? []);
-            unset($package->{'require-dev'});
-            $package->phpRequirement = $package->require['php'] ?? null;
+        if ($directOnly) {
+            $data = file_get_contents(
+                $this->getProjectRoot() . '/composer.json'
+            );
+            if ($data === false) {
+                throw new \Exception('Could not read composer.json to find direct packages.');
+            }
+
+            $json = json_decode($data);
+            $directPackages = array_keys(array_merge(
+                (array) $json->require,
+                (array) $json->{'require-dev'}
+            ));
+
+            $packages = array_filter(
+                $packages,
+                fn ($p) => in_array($p->name, $directPackages)
+            );
         }
 
-        return $packages;
+        $result = array_map(
+            fn ($p) => Package::fromRawData($p),
+            $packages
+        );
+
+        usort($result, fn ($a, $b) => strcmp($a->name, $b->name));
+
+        return $result;
     }
 
     private function getProjectRoot(): string
@@ -156,39 +172,45 @@ class CheckCommand extends Command
     }
 
     /**
-     * @param Package $package
-     *
-     * @return self::VALIDITY_*
+     * @phpstan-param Package::VALIDITY_* $isValid
      */
-    private function isPackageValidForTarget(object $package, string $phpVersion): string
+    private function getStatusIndicator(string $isValid): string
     {
-        if ($package->phpRequirement === null) {
-            return self::VALIDITY_UNKNOWN;
-        }
-
-        return Semver::satisfies($phpVersion, $package->phpRequirement)
-            ? self::VALIDITY_OK
-            : self::VALIDITY_FAIL;
+        return match ($isValid) {
+            Package::VALIDITY_OK      => '<fg=green>✔</>',
+            Package::VALIDITY_FAIL    => '<fg=red>✘</>',
+            Package::VALIDITY_UNKNOWN => '<fg=yellow>?</>',
+        };
     }
 
     /**
      * @param array<Package> $packages
      */
-    private function listPackages(OutputInterface $output, array $packages, bool $showRequirement): void
+    private function showDetailsTableArray(SymfonyStyle $io, array $packages): void
     {
+        $io->newLine();
+
+        $table = $io->createTable()
+            ->setVertical()
+            ->setHeaders(['Package', 'Version', 'PHP', 'Links']);
+
         foreach ($packages as $package) {
-            $requirement = $showRequirement
-                ? "(requires PHP {$package->phpRequirement})"
-                : '';
-
-            $homepage = $package->homepage ?? '<fg=gray>not given</>';
-            $source = $package->support->source ?? '<fg=gray>not given</>';
-            $version = str_starts_with($package->version, 'v') ? $package->version : 'v' . $package->version;
-
-            $output->writeln("<options=bold,underscore>{$package->name}:{$package->version}</> {$requirement}");
-            $output->writeln("   - Homepage:  {$homepage}");
-            $output->writeln("   - Source:    {$source}");
-            $output->writeln("   - Packagist: https://packagist.org/packages/{$package->name}#{$version}");
+            $packageLinks = $package->getLinks();
+            $links = array_map(
+                fn ($k, $v) => "{$k}: {$v}",
+                array_keys($packageLinks),
+                array_values($packageLinks),
+            );
+            $table->addRow([
+                $package->name,
+                $package->version,
+                $package->phpRequirement ?? '<fg=gray>none</>',
+                join("\n", $links),
+            ]);
         }
+
+        $table->render();
+
+        $io->newLine();
     }
 }
