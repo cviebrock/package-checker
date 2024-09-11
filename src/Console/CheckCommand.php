@@ -38,10 +38,10 @@ class CheckCommand extends Command
         $this->setHelp('Checks all the composer packages in a project for PHP compatibility.');
 
         $this->addOption(
-            'phpVersion',
-            'p',
+            'targetVersion',
+            't',
             InputOption::VALUE_REQUIRED,
-            'Version of PHP to check against',
+            'Target version of PHP against which to compare packages',
             phpversion()
         );
     }
@@ -57,7 +57,7 @@ class CheckCommand extends Command
             return Command::FAILURE;
         }
 
-        $targetPHPVersion = $input->getOption('phpVersion');
+        $targetPHPVersion = $input->getOption('targetVersion');
 
         ProgressBar::setFormatDefinition('custom', ' %current%/%max% [%bar%] %message%');
 
@@ -76,13 +76,12 @@ class CheckCommand extends Command
 
             $isValid = $this->isPackageValidForTarget($package, $targetPHPVersion);
             $results[$isValid][] = $package;
-            usleep(10_000);
         }
 
         $progressBar->setMessage('');
         $progressBar->finish();
 
-        $output->writeln('');
+        $output->writeln(['', '']);
 
         $result = Command::SUCCESS;
 
@@ -97,7 +96,8 @@ class CheckCommand extends Command
         if (count($results[self::VALIDITY_FAIL]) > 0) {
             $output->writeln([
                 '',
-                "<error>FAILURES:</error> These packages have PHP requirements that do not meet the target of {$targetPHPVersion}:",
+                '<error>FAILURES:</error>',
+                "These packages have PHP requirements that do not meet the target of {$targetPHPVersion}:",
                 '',
             ]);
             $this->listPackages($output, $results[self::VALIDITY_FAIL], true);
@@ -107,7 +107,8 @@ class CheckCommand extends Command
         if (count($results[self::VALIDITY_UNKNOWN]) > 0) {
             $output->writeln([
                 '',
-                '<comment>UNKNOWN:</comment> These packages have unknown PHP requirements; check their source code:',
+                '<comment>UNKNOWN:</comment>',
+                'These packages have unknown PHP requirements; check their source code:',
                 '',
             ]);
             $this->listPackages($output, $results[self::VALIDITY_UNKNOWN], false);
@@ -177,7 +178,7 @@ class CheckCommand extends Command
     {
         foreach ($packages as $package) {
             $requirement = $showRequirement
-                ? "(\"php\": \"{$package->phpRequirement}\")"
+                ? "(requires PHP {$package->phpRequirement})"
                 : '';
 
             $homepage = $package->homepage ?? '<fg=gray>not given</>';

@@ -1,6 +1,7 @@
 {
   "name": "silverorange/package-checker",
   "description": "Tool to check all the composer packages in a project for PHP compatibility.",
+  "homepage": "https://github.com/silverorange/package-checker",
   "authors": [
     {
       "name": "Colin Viebrock",
