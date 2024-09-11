@@ -1,0 +1,16 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Silverorange\PackageChecker\Console\CheckCommand;
+use Symfony\Component\Console\Application;
+
+require_once __DIR__ . '/../vendor/autoload.php';
+
+$app = new Application('check-packages', '1.0.0');
+$command = new CheckCommand();
+$app->add($command);
+
+$app->setDefaultCommand($command->getName(), true);
+$app->run();

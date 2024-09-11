@@ -1,0 +1,11 @@
+# Project configuration for phpstan static analysis.
+#
+# See https://phpstan.org/config-reference for all options
+
+parameters:
+  level: 8
+  errorFormat: table
+  paths:
+    - src
+  editorUrl: '%%file%%:%%line%%'
+  editorUrlTitle: '%%file%%:%%line%%'
