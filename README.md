@@ -7,7 +7,7 @@ The tool works by reading the `composer.lock` file in the root of your project, 
 ## Installation
 
 ```shell
-composer require --dev silverorange/package-checker
+composer require --dev cviebrock/package-checker
 ```
 
 ## Run

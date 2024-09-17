@@ -2,10 +2,11 @@
   "name": "cviebrock/package-checker",
   "description": "Tool to check all the composer packages in a project for PHP compatibility.",
   "homepage": "https://github.com/cviebrock/package-checker",
+  "license": "MIT",
   "authors": [
     {
       "name": "Colin Viebrock",
-      "email": "colin@silverorange.com"
+      "email": "colin@viebrock.ca"
     }
   ],
   "bin": [
