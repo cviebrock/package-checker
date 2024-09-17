@@ -6,7 +6,13 @@ declare(strict_types=1);
 use Silverorange\PackageChecker\Console\CheckCommand;
 use Symfony\Component\Console\Application;
 
-require_once __DIR__ . '/../vendor/autoload.php';
+if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
+    require_once __DIR__ . '/../vendor/autoload.php';
+} elseif (file_exists(__DIR__ . '/../../../../vendor/autoload.php')) {
+    require_once __DIR__ . '/../../../../vendor/autoload.php';
+} else {
+    throw new RuntimeException('Could not find autoload.php; please run "composer install".');
+}
 
 $app = new Application('check-packages', '1.0.0');
 $command = new CheckCommand();
